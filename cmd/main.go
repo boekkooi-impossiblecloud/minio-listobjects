@@ -30,12 +30,13 @@ import (
 	"time"
 
 	"github.com/minio/cli"
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/v2/console"
 	"github.com/minio/pkg/v2/env"
 	"github.com/minio/pkg/v2/trie"
 	"github.com/minio/pkg/v2/words"
+
+	"github.com/minio/minio/internal/color"
+	"github.com/minio/minio/internal/logger"
 )
 
 // GlobalFlags - global flags for minio.
@@ -135,6 +136,7 @@ func newApp(name string) *cli.App {
 	// Register all commands.
 	registerCommand(serverCmd)
 	registerCommand(gatewayCmd) // hidden kept for guiding users.
+	registerCommand(utilCmd)
 
 	// Set up app.
 	cli.HelpFlag = cli.BoolFlag{

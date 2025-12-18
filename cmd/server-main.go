@@ -39,6 +39,11 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/set"
+	"github.com/minio/pkg/v2/certs"
+	"github.com/minio/pkg/v2/env"
+	"golang.org/x/exp/slices"
+	"gopkg.in/yaml.v2"
+
 	"github.com/minio/minio/internal/auth"
 	"github.com/minio/minio/internal/bucket/bandwidth"
 	"github.com/minio/minio/internal/color"
@@ -48,10 +53,6 @@ import (
 	xhttp "github.com/minio/minio/internal/http"
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/logger"
-	"github.com/minio/pkg/v2/certs"
-	"github.com/minio/pkg/v2/env"
-	"golang.org/x/exp/slices"
-	"gopkg.in/yaml.v2"
 )
 
 // ServerFlags - server command specific flags
@@ -378,7 +379,7 @@ func serverHandleCmdArgs(ctxt serverCtxt) {
 	// to IPv6 address ie minio will start listening on IPv6 address whereas another
 	// (non-)minio process is listening on IPv4 of given port.
 	// To avoid this error situation we check for port availability.
-	logger.FatalIf(xhttp.CheckPortAvailability(globalMinioHost, globalMinioPort, globalTCPOptions), "Unable to start the server")
+	//logger.FatalIf(xhttp.CheckPortAvailability(globalMinioHost, globalMinioPort, globalTCPOptions), "Unable to start the server")
 
 	globalConnReadDeadline = ctxt.ConnReadDeadline
 	globalConnWriteDeadline = ctxt.ConnWriteDeadline
