@@ -29,9 +29,10 @@ import (
 	"github.com/gobwas/ws/wsutil"
 	"github.com/google/uuid"
 	"github.com/minio/madmin-go/v3"
+	"github.com/minio/mux"
+
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/minio/internal/pubsub"
-	"github.com/minio/mux"
 )
 
 const (
@@ -81,7 +82,7 @@ type ManagerOptions struct {
 
 // NewManager creates a new grid manager
 func NewManager(ctx context.Context, o ManagerOptions) (*Manager, error) {
-	found := false
+	//found := false
 	if o.AuthRequest == nil {
 		return nil, fmt.Errorf("grid: AuthRequest must be set")
 	}
@@ -96,14 +97,14 @@ func NewManager(ctx context.Context, o ManagerOptions) (*Manager, error) {
 		ctx = context.Background()
 	}
 	for _, host := range o.Hosts {
-		if host == o.Local {
-			if found {
-				return nil, fmt.Errorf("grid: local host found multiple times")
-			}
-			found = true
-			// No connection to local.
-			continue
-		}
+		//if host == o.Local {
+		//	if found {
+		//		return nil, fmt.Errorf("grid: local host found multiple times")
+		//	}
+		//	found = true
+		//	// No connection to local.
+		//	continue
+		//}
 		m.targets[host] = newConnection(connectionParams{
 			ctx:           ctx,
 			id:            m.ID,
@@ -119,9 +120,9 @@ func NewManager(ctx context.Context, o ManagerOptions) (*Manager, error) {
 			outgoingBytes: o.Outgoing,
 		})
 	}
-	if !found {
-		return nil, fmt.Errorf("grid: local host not found")
-	}
+	//if !found {
+	//	return nil, fmt.Errorf("grid: local host not found")
+	//}
 
 	return m, nil
 }
