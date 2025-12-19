@@ -200,14 +200,16 @@ func utilMain(ctx *cli.Context) {
 	inCh := make(chan metaCacheEntry, metacacheBlockSize)
 	go func() {
 		opts := listPathOptions{
-			Bucket:      bucketName,
-			Prefix:      "",
-			Separator:   "",
-			Limit:       math.MaxInt,
-			Marker:      "",
-			InclDeleted: includeVersions,
-			AskDisks:    globalAPIConfig.getListQuorum(),
-			Versioned:   includeVersions,
+			Bucket:             bucketName,
+			Recursive:          true,
+			IncludeDirectories: false,
+			Prefix:             "",
+			Separator:          "",
+			Limit:              math.MaxInt,
+			Marker:             "",
+			InclDeleted:        includeVersions,
+			AskDisks:           globalAPIConfig.getListQuorum(),
+			Versioned:          includeVersions,
 		}
 		opts.setBucketMeta(GlobalContext)
 
