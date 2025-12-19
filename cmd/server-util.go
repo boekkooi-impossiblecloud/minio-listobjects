@@ -26,6 +26,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -39,6 +40,10 @@ import (
 var UtilFlags = append(ServerFlags,
 	cli.StringFlag{
 		Name:  "bucket",
+		Usage: "The bucket to list",
+	},
+	cli.BoolFlag{
+		Name:  "includeVersions",
 		Usage: "The bucket to list",
 	},
 )
@@ -153,7 +158,9 @@ func utilMain(ctx *cli.Context) {
 		return
 	}
 
-	func() {
+	includeVersions := ctx.Bool("includeVersions")
+
+	if includeVersions {
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 		var err error
@@ -179,13 +186,13 @@ func utilMain(ctx *cli.Context) {
 		bootstrapTrace("globalBucketMetadataSys.Init", func() {
 			globalBucketMetadataSys.Init(GlobalContext, buckets, newObject)
 		})
-	}()
 
-	bucket, err := newObject.GetBucketInfo(GlobalContext, bucketName, BucketOptions{})
-	if err != nil {
-		logger.FatalIf(err, "Unable to get bucket info")
+		bucket, err := newObject.GetBucketInfo(GlobalContext, bucketName, BucketOptions{})
+		if err != nil {
+			logger.FatalIf(err, "Unable to get bucket info")
+		}
+		fmt.Printf("Bucket: %s, Versioning: %t, ObjectLocking: %t\n", bucket.Name, bucket.Versioning, bucket.ObjectLocking)
 	}
-	fmt.Printf("Bucket: %s, Versioning: %t, ObjectLocking: %t\n", bucket.Name, bucket.Versioning, bucket.ObjectLocking)
 
 	inCh := make(chan metaCacheEntry, metacacheBlockSize)
 	go func() {
@@ -195,9 +202,9 @@ func utilMain(ctx *cli.Context) {
 			Separator:   "",
 			Limit:       math.MaxInt,
 			Marker:      "",
-			InclDeleted: true,
+			InclDeleted: includeVersions,
 			AskDisks:    globalAPIConfig.getListQuorum(),
-			Versioned:   bucket.Versioning,
+			Versioned:   includeVersions,
 		}
 		opts.setBucketMeta(GlobalContext)
 
@@ -221,30 +228,36 @@ func utilMain(ctx *cli.Context) {
 	var record []string
 	for entry := range inCh {
 		// Skip directories
-		if entry.isDir() || (!bucket.Versioning && entry.isObjectDir() && entry.isLatestDeletemarker()) {
+		if entry.isDir() || (!includeVersions && entry.isObjectDir() && entry.isLatestDeletemarker()) {
 			continue
 		}
 
 		fmt.Printf(".")
-		if bucket.Versioning {
+		if includeVersions {
 			fiv, err := entry.fileInfoVersions(bucketName)
 			if err != nil {
 				logger.Fatal(err, "fileInfoVersions: failed to get version of %s: %s", entry.name)
 			}
 			for _, version := range fiv.Versions {
-				record = append(record, version.Name, version.VersionID)
+				record = append(record, version.Name, version.VersionID, strconv.FormatBool(version.Deleted), strconv.FormatBool(version.IsLatest))
 				if err := target.Write(record); err != nil {
 					logger.Fatal(err, "failed to write row for %s", entry.name)
 				}
 				record = record[:0]
 			}
-		} else {
-			record = append(record, entry.name)
-			if err := target.Write(record); err != nil {
-				logger.Fatal(err, "failed to write row for %s", entry.name)
-			}
-			record = record[:0]
+			continue
 		}
+
+		// Skip delete marker for versioned buckets
+		if entry.isLatestDeletemarker() {
+			continue
+		}
+
+		record = append(record, entry.name)
+		if err := target.Write(record); err != nil {
+			logger.Fatal(err, "failed to write row for %s", entry.name)
+		}
+		record = record[:0]
 	}
 	fmt.Printf("\nDone\n")
 }
