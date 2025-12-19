@@ -122,6 +122,9 @@ func utilMain(ctx *cli.Context) {
 		logger.FatalIf(initGlobalGrid(GlobalContext, globalEndpoints), "Unable to configure server grid RPC services")
 	})
 
+	// Configure server handler as this sets up the globalLocalSetDrives
+	_, err := configureServerHandler(globalEndpoints)
+
 	// Allow grid to start after registering all services.
 	xioutil.SafeClose(globalGridStart)
 
