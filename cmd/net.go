@@ -27,9 +27,10 @@ import (
 	"strings"
 
 	"github.com/minio/minio-go/v7/pkg/set"
+	xnet "github.com/minio/pkg/v2/net"
+
 	"github.com/minio/minio/internal/config"
 	"github.com/minio/minio/internal/logger"
-	xnet "github.com/minio/pkg/v2/net"
 )
 
 // IPv4 addresses of local host.
@@ -275,6 +276,10 @@ func isLocalHost(host string, port string, localPort string) (bool, error) {
 	hostIPs, err := getHostIP(host)
 	if err != nil {
 		return false, err
+	}
+
+	if globalIsUtil {
+		return false, nil
 	}
 
 	nonInterIPV4s := mustGetLocalIP4().Intersection(hostIPs)

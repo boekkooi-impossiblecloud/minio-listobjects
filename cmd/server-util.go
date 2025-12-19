@@ -56,6 +56,8 @@ var utilCmd = cli.Command{
 	CustomHelpTemplate: ``,
 }
 
+var globalIsUtil bool
+
 // serverMain handler called for 'minio server' command.
 func utilMain(ctx *cli.Context) {
 	signal.Notify(globalOSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
@@ -63,6 +65,8 @@ func utilMain(ctx *cli.Context) {
 	go handleSignals()
 
 	setDefaultProfilerRates()
+
+	globalIsUtil = true
 
 	// Initialize globalConsoleSys system
 	bootstrapTrace("newConsoleLogger", func() {
