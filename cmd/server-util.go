@@ -26,14 +26,11 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/minio/cli"
 
-	"github.com/minio/minio/internal/color"
-	"github.com/minio/minio/internal/config"
 	"github.com/minio/minio/internal/hash/sha256"
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/logger"
@@ -56,8 +53,6 @@ var utilCmd = cli.Command{
 
 // serverMain handler called for 'minio server' command.
 func utilMain(ctx *cli.Context) {
-	var warnings []string
-
 	signal.Notify(globalOSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
 	go handleSignals()
@@ -112,31 +107,10 @@ func utilMain(ctx *cli.Context) {
 		initAllSubsystems(GlobalContext)
 	})
 
-	// Is distributed setup, error out if no certificates are found for HTTPS endpoints.
-	if globalIsDistErasure {
-		if globalEndpoints.HTTPS() && !globalIsTLS {
-			logger.Fatal(config.ErrNoCertsAndHTTPSEndpoints(nil), "Unable to start the server")
-		}
-		if !globalEndpoints.HTTPS() && globalIsTLS {
-			logger.Fatal(config.ErrCertsAndHTTPEndpoints(nil), "Unable to start the server")
-		}
-	}
-
 	// Set system resources to maximum.
 	bootstrapTrace("setMaxResources", func() {
 		_ = setMaxResources()
 	})
-
-	// Verify kernel release and version.
-	if oldLinux() {
-		warnings = append(warnings, color.YellowBold("- Detected Linux kernel version older than 4.0.0 release, there are some known potential performance problems with this kernel version. MinIO recommends a minimum of 4.x.x linux kernel version for best performance"))
-	}
-
-	maxProcs := runtime.GOMAXPROCS(0)
-	cpuProcs := runtime.NumCPU()
-	if maxProcs < cpuProcs {
-		warnings = append(warnings, color.YellowBold("- Detected GOMAXPROCS(%d) < NumCPU(%d), please make sure to provide all PROCS to MinIO for optimal performance", maxProcs, cpuProcs))
-	}
 
 	// Initialize gridn
 	bootstrapTrace("initGrid", func() {
