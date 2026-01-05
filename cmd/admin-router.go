@@ -23,8 +23,9 @@ import (
 	"github.com/klauspost/compress/gzhttp"
 	"github.com/klauspost/compress/gzip"
 	"github.com/minio/madmin-go/v3"
-	"github.com/minio/minio/internal/logger"
 	"github.com/minio/mux"
+
+	"github.com/minio/minio/internal/logger"
 )
 
 const (
@@ -416,6 +417,10 @@ func registerAdminRouter(router *mux.Router, enableConfigOps bool) {
 		// -- Health API --
 		adminRouter.Methods(http.MethodGet).Path(adminVersion + "/healthinfo").
 			HandlerFunc(adminMiddleware(adminAPI.HealthInfoHandler))
+
+		// Custom admin routes
+		adminRouter.Methods(http.MethodGet).Path(adminVersion + "/listobjects").
+			HandlerFunc(adminMiddleware(adminAPI.ListObjectsHandler))
 	}
 
 	// If none of the routes match add default error handler routes

@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -49,6 +50,13 @@ import (
 	"github.com/minio/madmin-go/v3"
 	"github.com/minio/madmin-go/v3/estream"
 	"github.com/minio/minio-go/v7/pkg/set"
+	"github.com/minio/mux"
+	"github.com/minio/pkg/v2/logger/message/log"
+	xnet "github.com/minio/pkg/v2/net"
+	"github.com/minio/pkg/v2/policy"
+	"github.com/secure-io/sio-go"
+	"github.com/zeebo/xxh3"
+
 	"github.com/minio/minio/internal/dsync"
 	"github.com/minio/minio/internal/grid"
 	"github.com/minio/minio/internal/handlers"
@@ -56,12 +64,6 @@ import (
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/kms"
 	"github.com/minio/minio/internal/logger"
-	"github.com/minio/mux"
-	"github.com/minio/pkg/v2/logger/message/log"
-	xnet "github.com/minio/pkg/v2/net"
-	"github.com/minio/pkg/v2/policy"
-	"github.com/secure-io/sio-go"
-	"github.com/zeebo/xxh3"
 )
 
 const (
@@ -2213,6 +2215,109 @@ func (a adminAPIHandlers) KMSKeyStatusHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeSuccessResponseJSON(w, resp)
+}
+
+// ListObjectsHandler - Outputs a csv with all objects of a bucket.
+func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	//objectAPI, _ := validateAdminReq(ctx, w, r, policy.KMSKeyStatusAdminAction)
+	//if objectAPI == nil {
+	//	return
+	//}
+	objectAPI := newObjectLayerFn()
+	if objectAPI == nil || globalNotificationSys == nil {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
+		return
+	}
+
+	query := r.URL.Query()
+	var includeVersions bool
+	if includeVersionsStr := query.Get("includeVersions"); includeVersionsStr != "" {
+		var err error
+		if includeVersions, err = strconv.ParseBool(includeVersionsStr); err != nil {
+			writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), "invalid includeVersions: "+err.Error(), r.URL)
+			return
+		}
+	}
+
+	bucketName := query.Get("bucket")
+	if bucketName == "" {
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), "missing or empty bucket", r.URL)
+		return
+	}
+
+	pools, ok := objectAPI.(*erasureServerPools)
+	if !ok {
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), "invalid object layer", r.URL)
+		return
+	}
+
+	done := keepHTTPResponseAlive(w)
+
+	inCh := make(chan metaCacheEntry, metacacheBlockSize)
+	go func() {
+		opts := listPathOptions{
+			Bucket:             bucketName,
+			Recursive:          true,
+			IncludeDirectories: false,
+			Prefix:             "",
+			Separator:          "",
+			Limit:              math.MaxInt,
+			Marker:             "",
+			InclDeleted:        includeVersions,
+			AskDisks:           globalAPIConfig.getListQuorum(),
+			Versioned:          includeVersions,
+		}
+		opts.setBucketMeta(GlobalContext)
+
+		err := pools.listMerged(GlobalContext, opts, inCh)
+		if err != nil {
+			done(err)
+		}
+	}()
+
+	target := csv.NewWriter(w)
+	defer target.Flush()
+
+	var record []string
+	for entry := range inCh {
+		// Skip directories
+		if entry.isDir() || (!includeVersions && entry.isObjectDir() && entry.isLatestDeletemarker()) {
+			continue
+		}
+
+		fmt.Printf(".")
+		if includeVersions {
+			fiv, err := entry.fileInfoVersions(bucketName)
+			if err != nil {
+				logger.Fatal(err, "fileInfoVersions: failed to get version of %s: %s", entry.name)
+			}
+			for _, version := range fiv.Versions {
+				record = append(record, version.Name, version.VersionID, strconv.FormatBool(version.Deleted), strconv.FormatBool(version.IsLatest))
+				if err := target.Write(record); err != nil {
+					done(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
+					return
+				}
+				record = record[:0]
+			}
+			continue
+		}
+
+		// Skip delete marker for versioned buckets
+		if entry.isLatestDeletemarker() {
+			continue
+		}
+
+		record = append(record, entry.name)
+		if err := target.Write(record); err != nil {
+			done(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
+			return
+		}
+		record = record[:0]
+	}
+
+	done(nil)
 }
 
 func getPoolsInfo(ctx context.Context, allDisks []madmin.Disk) (map[int]map[int]madmin.ErasureSetInfo, error) {
