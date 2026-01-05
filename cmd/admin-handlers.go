@@ -2221,15 +2221,15 @@ func (a adminAPIHandlers) KMSKeyStatusHandler(w http.ResponseWriter, r *http.Req
 func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	//objectAPI, _ := validateAdminReq(ctx, w, r, policy.KMSKeyStatusAdminAction)
-	//if objectAPI == nil {
-	//	return
-	//}
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
+	objectAPI, _ := validateAdminReq(ctx, w, r, policy.ListBucketAction)
+	if objectAPI == nil {
 		return
 	}
+	//objectAPI := newObjectLayerFn()
+	//if objectAPI == nil || globalNotificationSys == nil {
+	//	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
+	//	return
+	//}
 
 	query := r.URL.Query()
 	var includeVersions bool
