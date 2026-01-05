@@ -26,8 +26,9 @@ import (
 	"sync"
 	"time"
 
-	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/mux"
+
+	xioutil "github.com/minio/minio/internal/ioutil"
 )
 
 //go:generate stringer -type=debugMsg $GOFILE
