@@ -96,19 +96,17 @@ func NewManager(ctx context.Context, o ManagerOptions) (*Manager, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	for _, host := range o.Hosts {
-		//if host == o.Local {
-		//	if found {
-		//		return nil, fmt.Errorf("grid: local host found multiple times")
-		//	}
-		//	found = true
-		//	// No connection to local.
-		//	continue
-		//}
+	for i, host := range o.Hosts {
+		var local string
+		if i == 0 {
+			local = o.Hosts[1]
+		} else {
+			local = o.Hosts[0]
+		}
 		m.targets[host] = newConnection(connectionParams{
 			ctx:           ctx,
 			id:            m.ID,
-			local:         o.Local,
+			local:         local,
 			remote:        host,
 			dial:          o.Dialer,
 			handlers:      &m.handlers,
@@ -119,6 +117,11 @@ func NewManager(ctx context.Context, o ManagerOptions) (*Manager, error) {
 			incomingBytes: o.Incoming,
 			outgoingBytes: o.Outgoing,
 		})
+
+		//// Force a connection didn't work due to shouldConnect
+		//c.side = ws.StateClientSide
+		//go c.connect()
+		//m.targets[host] = c
 	}
 	//if !found {
 	//	return nil, fmt.Errorf("grid: local host not found")

@@ -39,11 +39,12 @@ import (
 	"github.com/gobwas/ws/wsutil"
 	"github.com/google/uuid"
 	"github.com/minio/madmin-go/v3"
+	"github.com/tinylib/msgp/msgp"
+	"github.com/zeebo/xxh3"
+
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/minio/internal/pubsub"
-	"github.com/tinylib/msgp/msgp"
-	"github.com/zeebo/xxh3"
 )
 
 // A Connection is a remote connection.
@@ -785,6 +786,7 @@ func (c *Connection) handleIncoming(ctx context.Context, conn net.Conn, req conn
 		}
 		return err
 	}
+	// This one is not making my day!
 	if c.shouldConnect() {
 		if debugPrint {
 			fmt.Println("expected to be client side, not server side")
