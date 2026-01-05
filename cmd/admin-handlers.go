@@ -2253,7 +2253,11 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	done := keepHTTPResponseAlive(w)
+
+	target := csv.NewWriter(w)
+	defer target.Flush()
 
 	inCh := make(chan metaCacheEntry, metacacheBlockSize)
 	go func() {
@@ -2276,9 +2280,6 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 			done(err)
 		}
 	}()
-
-	target := csv.NewWriter(w)
-	defer target.Flush()
 
 	var record []string
 	for entry := range inCh {
