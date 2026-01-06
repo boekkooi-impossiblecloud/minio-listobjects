@@ -2273,9 +2273,9 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 			AskDisks:           globalAPIConfig.getListQuorum(),
 			Versioned:          includeVersions,
 		}
-		opts.setBucketMeta(GlobalContext)
+		opts.setBucketMeta(ctx)
 
-		err := pools.listMerged(GlobalContext, opts, inCh)
+		err := pools.listMerged(ctx, opts, inCh)
 		if err != nil {
 			done(err)
 		}
@@ -2288,15 +2288,15 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
-		fmt.Printf(".")
 		if includeVersions {
 			fiv, err := entry.fileInfoVersions(bucketName)
 			if err != nil {
-				logger.Fatal(err, "fileInfoVersions: failed to get version of %s: %s", entry.name)
+				done(fmt.Errorf("fileInfoVersions: failed to get version of %s: %w", entry.name, err))
+				return
 			}
 			for _, version := range fiv.Versions {
 				record = append(record, version.Name, version.VersionID, strconv.FormatBool(version.Deleted), strconv.FormatBool(version.IsLatest))
-				if err := target.Write(record); err != nil {
+				if err = target.Write(record); err != nil {
 					done(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
 					return
 				}
