@@ -2282,7 +2282,7 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 		opts.setBucketMeta(ctx)
 
 		err := pools.listMerged(ctx, opts, inCh)
-		if err != nil {
+		if err != nil && err != io.EOF {
 			done(err)
 		}
 	}()
