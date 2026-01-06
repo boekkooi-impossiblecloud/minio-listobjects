@@ -2257,7 +2257,13 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 	done := keepHTTPResponseAlive(w)
 
 	target := csv.NewWriter(w)
-	defer target.Flush()
+	doneAndFlush := func(err error) {
+		target.Flush()
+		w.(http.Flusher).Flush()
+
+		done(err)
+		w.(http.Flusher).Flush()
+	}
 
 	inCh := make(chan metaCacheEntry, metacacheBlockSize)
 	go func() {
@@ -2291,13 +2297,13 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 		if includeVersions {
 			fiv, err := entry.fileInfoVersions(bucketName)
 			if err != nil {
-				done(fmt.Errorf("fileInfoVersions: failed to get version of %s: %w", entry.name, err))
+				doneAndFlush(fmt.Errorf("fileInfoVersions: failed to get version of %s: %w", entry.name, err))
 				return
 			}
 			for _, version := range fiv.Versions {
 				record = append(record, version.Name, version.VersionID, strconv.FormatBool(version.Deleted), strconv.FormatBool(version.IsLatest))
 				if err = target.Write(record); err != nil {
-					done(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
+					doneAndFlush(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
 					return
 				}
 				record = record[:0]
@@ -2312,13 +2318,13 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 
 		record = append(record, entry.name)
 		if err := target.Write(record); err != nil {
-			done(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
+			doneAndFlush(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
 			return
 		}
 		record = record[:0]
 	}
 
-	done(nil)
+	doneAndFlush(nil)
 }
 
 func getPoolsInfo(ctx context.Context, allDisks []madmin.Disk) (map[int]map[int]madmin.ErasureSetInfo, error) {
