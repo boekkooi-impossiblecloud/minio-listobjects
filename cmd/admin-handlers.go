@@ -2306,6 +2306,8 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 					doneAndFlush(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
 					return
 				}
+
+				target.Flush()
 				record = record[:0]
 			}
 			continue
@@ -2321,6 +2323,8 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 			doneAndFlush(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
 			return
 		}
+
+		target.Flush()
 		record = record[:0]
 	}
 
