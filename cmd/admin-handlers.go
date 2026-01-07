@@ -2257,9 +2257,12 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 	done := keepHTTPResponseAlive(w)
 
 	target := csv.NewWriter(w)
-	doneAndFlush := func(err error) {
+	targetFlush := func() {
 		target.Flush()
 		w.(http.Flusher).Flush()
+	}
+	doneAndFlush := func(err error) {
+		targetFlush()
 
 		done(err)
 		w.(http.Flusher).Flush()
@@ -2307,7 +2310,7 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 					return
 				}
 
-				target.Flush()
+				targetFlush()
 				record = record[:0]
 			}
 			continue
@@ -2324,7 +2327,7 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		target.Flush()
+		targetFlush()
 		record = record[:0]
 	}
 
