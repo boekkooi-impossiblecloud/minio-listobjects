@@ -2286,7 +2286,7 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 
 		err := pools.listMerged(ctx, opts, inCh)
 		if err != nil && err != io.EOF {
-			doneAndFlush(err)
+			logger.Error("listMerged failed with an error: " + err.Error())
 		}
 	}()
 
