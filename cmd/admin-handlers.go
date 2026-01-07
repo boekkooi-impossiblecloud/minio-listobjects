@@ -2283,7 +2283,7 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 
 		err := pools.listMerged(ctx, opts, inCh)
 		if err != nil && err != io.EOF {
-			done(err)
+			doneAndFlush(err)
 		}
 	}()
 
