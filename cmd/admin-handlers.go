@@ -2292,8 +2292,8 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 
 	var record []string
 	for entry := range inCh {
-		// Skip directories
-		if !entry.isObject() || entry.isObjectDir() {
+		// Exclude directories
+		if entry.isDir() || (!includeVersions && entry.isObjectDir() && entry.isLatestDeletemarker()) {
 			continue
 		}
 
