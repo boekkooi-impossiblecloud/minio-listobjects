@@ -2225,11 +2225,6 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 	if objectAPI == nil {
 		return
 	}
-	//objectAPI := newObjectLayerFn()
-	//if objectAPI == nil || globalNotificationSys == nil {
-	//	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
-	//	return
-	//}
 
 	query := r.URL.Query()
 	var includeVersions bool
@@ -2247,9 +2242,12 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	pools, ok := objectAPI.(*erasureServerPools)
-	if !ok {
-		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), "invalid object layer", r.URL)
+	resultCh := make(chan ObjectInfo, metacacheBlockSize)
+	err := objectAPI.Walk(ctx, bucketName, "", resultCh, WalkOptions{
+		LatestOnly: !includeVersions,
+	})
+	if err != nil {
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), "failed to walk the bucket: "+err.Error(), r.URL)
 		return
 	}
 
@@ -2268,66 +2266,25 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 		w.(http.Flusher).Flush()
 	}
 
-	inCh := make(chan metaCacheEntry, metacacheBlockSize)
-	go func() {
-		opts := listPathOptions{
-			Bucket:             bucketName,
-			Recursive:          true,
-			IncludeDirectories: false,
-			Prefix:             "",
-			Separator:          "",
-			Limit:              math.MaxInt,
-			Marker:             "",
-			InclDeleted:        includeVersions,
-			AskDisks:           globalAPIConfig.getListQuorum(),
-			Versioned:          includeVersions,
-		}
-		opts.setBucketMeta(ctx)
-
-		err := pools.listMerged(ctx, opts, inCh)
-		if err != nil && err != io.EOF {
-			logger.Error("listMerged failed with an error: " + err.Error())
-		}
-	}()
-
 	var record []string
-	for entry := range inCh {
-		// Exclude directories
-		if entry.isDir() || (!includeVersions && entry.isObjectDir() && entry.isLatestDeletemarker()) {
-			continue
-		}
-
+	for object := range resultCh {
 		if includeVersions {
-			fiv, err := entry.fileInfoVersions(bucketName)
-			if err != nil {
-				doneAndFlush(fmt.Errorf("fileInfoVersions: failed to get version of %s: %w", entry.name, err))
-				return
+			record = append(record, object.Name, object.VersionID, strconv.FormatBool(object.DeleteMarker), strconv.FormatBool(object.IsLatest))
+		} else {
+			// Skip delete marker for versioned buckets
+			if object.DeleteMarker {
+				continue
 			}
-			for _, version := range fiv.Versions {
-				record = append(record, version.Name, version.VersionID, strconv.FormatBool(version.Deleted), strconv.FormatBool(version.IsLatest))
-				if err = target.Write(record); err != nil {
-					doneAndFlush(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
-					return
-				}
 
-				targetFlush()
-				record = record[:0]
-			}
-			continue
+			record = append(record, object.Name)
 		}
 
-		// Skip delete marker for versioned buckets
-		if entry.isLatestDeletemarker() {
-			continue
-		}
-
-		record = append(record, entry.name)
-		if err := target.Write(record); err != nil {
-			doneAndFlush(fmt.Errorf("failed to write row for %s: %w", entry.name, err))
+		if err = target.Write(record); err != nil {
+			doneAndFlush(fmt.Errorf("failed to write row for %s: %w", object.Name, err))
 			return
 		}
-
 		targetFlush()
+
 		record = record[:0]
 	}
 
