@@ -38,13 +38,14 @@ import (
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio-go/v7/pkg/tags"
+	"github.com/minio/pkg/v2/sync/errgroup"
+	"github.com/minio/pkg/v2/wildcard"
+
 	"github.com/minio/minio/internal/bpool"
 	"github.com/minio/minio/internal/cachevalue"
 	"github.com/minio/minio/internal/config/storageclass"
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/logger"
-	"github.com/minio/pkg/v2/sync/errgroup"
-	"github.com/minio/pkg/v2/wildcard"
 )
 
 type erasureServerPools struct {
@@ -1996,6 +1997,7 @@ func (z *erasureServerPools) Walk(ctx context.Context, bucket, prefix string, re
 
 					disks, infos, _ := set.getOnlineDisksWithHealingAndInfo(true)
 					if len(disks) == 0 {
+						logger.LogIf(ctx, errors.New("no disks returned"))
 						cancel()
 						return
 					}
@@ -2050,6 +2052,7 @@ func (z *erasureServerPools) Walk(ctx context.Context, bucket, prefix string, re
 						if opts.LatestOnly {
 							fi, err := entry.fileInfo(bucket)
 							if err != nil {
+								logger.LogIf(ctx, fmt.Errorf("fileInfo failed for %s: %w", entry.name, err))
 								cancel()
 								return
 							}
@@ -2068,6 +2071,7 @@ func (z *erasureServerPools) Walk(ctx context.Context, bucket, prefix string, re
 						} else {
 							fivs, err := entry.fileInfoVersions(bucket)
 							if err != nil {
+								logger.LogIf(ctx, fmt.Errorf("fileInfoVersions failed for %s: %w", entry.name, err))
 								cancel()
 								return
 							}
