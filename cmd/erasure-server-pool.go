@@ -2283,7 +2283,7 @@ func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix st
 		defer func() {
 			select {
 			case <-ctx.Done():
-				sendErr(ctx.Err())
+				sendErr(errors.Join(ctx.Err(), context.Cause(ctx)))
 			default:
 			}
 			xioutil.SafeClose(results)
@@ -2294,7 +2294,7 @@ func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix st
 			case results <- objectInfoOrErr{Item: oi}:
 				return true
 			case <-ctx.Done():
-				sendErr(context.Cause(ctx))
+				sendErr(errors.Join(ctx.Err(), context.Cause(ctx)))
 				return false
 			}
 		}

@@ -2936,6 +2936,7 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 		errsStr := errors.Join(errs...).Error()
 		logger.Error(fmt.Sprintf("Failures occurred while walking %s:\n%s", bucketName, errsStr))
 		_ = target.Write([]string{errsStr})
+		_ = target.Write([]string{"parent context: " + ctx.Err().Error()})
 	}
 }
 
