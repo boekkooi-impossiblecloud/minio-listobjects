@@ -25,6 +25,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -49,6 +50,13 @@ import (
 	"github.com/minio/madmin-go/v3"
 	"github.com/minio/madmin-go/v3/estream"
 	"github.com/minio/minio-go/v7/pkg/set"
+	"github.com/minio/mux"
+	"github.com/minio/pkg/v2/logger/message/log"
+	xnet "github.com/minio/pkg/v2/net"
+	"github.com/minio/pkg/v2/policy"
+	"github.com/secure-io/sio-go"
+	"github.com/zeebo/xxh3"
+
 	"github.com/minio/minio/internal/dsync"
 	"github.com/minio/minio/internal/grid"
 	"github.com/minio/minio/internal/handlers"
@@ -56,12 +64,6 @@ import (
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/kms"
 	"github.com/minio/minio/internal/logger"
-	"github.com/minio/mux"
-	"github.com/minio/pkg/v2/logger/message/log"
-	xnet "github.com/minio/pkg/v2/net"
-	"github.com/minio/pkg/v2/policy"
-	"github.com/secure-io/sio-go"
-	"github.com/zeebo/xxh3"
 )
 
 const (
@@ -2854,6 +2856,86 @@ func (a adminAPIHandlers) HealthInfoHandler(w http.ResponseWriter, r *http.Reque
 		case <-healthCtx.Done():
 			return
 		}
+	}
+}
+
+// ListObjectsHandler - Outputs a csv with all objects of a bucket.
+func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	objectAPIInterface, _ := validateAdminReq(ctx, w, r, policy.ListBucketAction)
+	if objectAPIInterface == nil {
+		return
+	}
+	objectAPI, ok := objectAPIInterface.(*erasureServerPools)
+	if !ok {
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), "invalid objectAPI", r.URL)
+		return
+	}
+
+	query := r.URL.Query()
+	var includeVersions bool
+	if includeVersionsStr := query.Get("includeVersions"); includeVersionsStr != "" {
+		var err error
+		if includeVersions, err = strconv.ParseBool(includeVersionsStr); err != nil {
+			writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), "invalid includeVersions: "+err.Error(), r.URL)
+			return
+		}
+	}
+
+	bucketName := query.Get("bucket")
+	if bucketName == "" {
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), "missing or empty bucket", r.URL)
+		return
+	}
+
+	resultCh := make(chan objectInfoOrErr, metacacheBlockSize)
+	err := objectAPI.WalkUpstream(ctx, bucketName, "", resultCh, WalkOptions{
+		LatestOnly: !includeVersions,
+	})
+	if err != nil {
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInternalError), "failed to walk the bucket: "+err.Error(), r.URL)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+
+	target := csv.NewWriter(w)
+	defer target.Flush()
+
+	var record []string
+	var errs []error
+	for res := range resultCh {
+		if res.Err != nil {
+			errs = append(errs, res.Err)
+			continue
+		}
+
+		object := res.Item
+		if includeVersions {
+			record = append(record, object.Name, object.VersionID, strconv.FormatBool(object.DeleteMarker), strconv.FormatBool(object.IsLatest))
+		} else {
+			// Skip delete marker for versioned buckets
+			if object.DeleteMarker {
+				continue
+			}
+
+			record = append(record, object.Name)
+		}
+
+		if err = target.Write(record); err != nil {
+			errs = append(errs, fmt.Errorf("failed to write row for %s: %w", object.Name, err))
+			break
+		}
+		target.Flush()
+
+		record = record[:0]
+	}
+
+	if len(errs) > 0 {
+		errsStr := errors.Join(errs...).Error()
+		logger.Error(fmt.Sprintf("Failures occurred while walking %s:\n%s", bucketName, errsStr))
+		_ = target.Write([]string{errsStr})
 	}
 }
 
