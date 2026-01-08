@@ -38,13 +38,14 @@ import (
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio-go/v7/pkg/tags"
+	"github.com/minio/pkg/v2/sync/errgroup"
+	"github.com/minio/pkg/v2/wildcard"
+
 	"github.com/minio/minio/internal/bpool"
 	"github.com/minio/minio/internal/cachevalue"
 	"github.com/minio/minio/internal/config/storageclass"
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/logger"
-	"github.com/minio/pkg/v2/sync/errgroup"
-	"github.com/minio/pkg/v2/wildcard"
 )
 
 type erasureServerPools struct {
@@ -2139,6 +2140,225 @@ func (z *erasureServerPools) Walk(ctx context.Context, bucket, prefix string, re
 			}
 			wg.Wait()
 		}
+	}()
+
+	return nil
+}
+
+// helper type for listIAMConfigItems
+type objectInfoOrErr struct {
+	Item ObjectInfo
+	Err  error
+}
+
+// WalkUpstream taken from https://raw.githubusercontent.com/minio/minio/2d7a3d15166cc521db98dc4fb1eddbdecc0ca523/cmd/erasure-server-pool.go
+func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix string, results chan<- objectInfoOrErr, opts WalkOptions) error {
+	if err := checkListObjsArgs(ctx, bucket, prefix, ""); err != nil {
+		xioutil.SafeClose(results)
+		return err
+	}
+	parentCtx := ctx
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	var entries []chan metaCacheEntry
+
+	for poolIdx, erasureSet := range z.serverPools {
+		for setIdx, set := range erasureSet.sets {
+			set := set
+			listOut := make(chan metaCacheEntry, 1)
+			entries = append(entries, listOut)
+			disks, infos, _ := set.getOnlineDisksWithHealingAndInfo(true)
+			if len(disks) == 0 {
+				xioutil.SafeClose(results)
+				err := fmt.Errorf("Walk: no online disks found in pool %d, set %d", setIdx, poolIdx)
+				cancelCause(err)
+				return err
+			}
+			go func() {
+				defer xioutil.SafeClose(listOut)
+				send := func(e metaCacheEntry) {
+					if e.isDir() {
+						// Ignore directories.
+						return
+					}
+					select {
+					case listOut <- e:
+					case <-ctx.Done():
+					}
+				}
+
+				askDisks := getListQuorum(opts.AskDisks, set.setDriveCount)
+				if askDisks == -1 {
+					newDisks := getQuorumDisks(disks, infos, (len(disks)+1)/2)
+					if newDisks != nil {
+						// If we found disks signature in quorum, we proceed to list
+						// from a single drive, shuffling of the drives is subsequently.
+						disks = newDisks
+						askDisks = 1
+					} else {
+						// If we did not find suitable disks, perform strict quorum listing
+						// as no disk agrees on quorum anymore.
+						askDisks = getListQuorum("strict", set.setDriveCount)
+					}
+				}
+
+				// Special case: ask all disks if the drive count is 4
+				if set.setDriveCount == 4 || askDisks > len(disks) {
+					askDisks = len(disks) // use all available drives
+				}
+
+				var fallbackDisks []StorageAPI
+				if askDisks > 0 && len(disks) > askDisks {
+					rand.Shuffle(len(disks), func(i, j int) {
+						disks[i], disks[j] = disks[j], disks[i]
+					})
+					fallbackDisks = disks[askDisks:]
+					disks = disks[:askDisks]
+				}
+
+				requestedVersions := 0
+				if opts.LatestOnly {
+					requestedVersions = 1
+				}
+
+				// However many we ask, versions must exist on ~50%
+				listingQuorum := (askDisks + 1) / 2
+
+				// How to resolve partial results.
+				resolver := metadataResolutionParams{
+					dirQuorum:         listingQuorum,
+					objQuorum:         listingQuorum,
+					bucket:            bucket,
+					requestedVersions: requestedVersions,
+				}
+
+				path := baseDirFromPrefix(prefix)
+				filterPrefix := strings.Trim(strings.TrimPrefix(prefix, path), slashSeparator)
+				if path == prefix {
+					filterPrefix = ""
+				}
+
+				lopts := listPathRawOptions{
+					disks:          disks,
+					fallbackDisks:  fallbackDisks,
+					bucket:         bucket,
+					path:           path,
+					filterPrefix:   filterPrefix,
+					recursive:      true,
+					forwardTo:      opts.Marker,
+					minDisks:       listingQuorum,
+					reportNotFound: false,
+					agreed:         send,
+					partial: func(entries metaCacheEntries, _ []error) {
+						entry, ok := entries.resolve(&resolver)
+						if ok {
+							send(*entry)
+						}
+					},
+					finished: nil,
+				}
+
+				if err := listPathRaw(ctx, lopts); err != nil {
+					cancelCause(fmt.Errorf("listPathRaw returned %w: opts(%#v)", err, lopts))
+					return
+				}
+			}()
+		}
+	}
+
+	// Convert and filter merged entries.
+	merged := make(chan metaCacheEntry, 100)
+	vcfg, _ := globalBucketVersioningSys.Get(bucket)
+	errCh := make(chan error, 1)
+	go func() {
+		sentErr := false
+		sendErr := func(err error) {
+			if !sentErr {
+				select {
+				case results <- objectInfoOrErr{Err: err}:
+					sentErr = true
+				case <-parentCtx.Done():
+				}
+			}
+		}
+		defer func() {
+			select {
+			case <-ctx.Done():
+				sendErr(errors.Join(ctx.Err(), context.Cause(ctx)))
+			default:
+			}
+			xioutil.SafeClose(results)
+			cancelCause(errors.New("exit defer nil"))
+		}()
+		send := func(oi ObjectInfo) bool {
+			select {
+			case results <- objectInfoOrErr{Item: oi}:
+				return true
+			case <-ctx.Done():
+				sendErr(errors.Join(ctx.Err(), context.Cause(ctx)))
+				return false
+			}
+		}
+		for mEntry := range merged {
+			entry := mEntry
+			if opts.LatestOnly {
+				fi, err := entry.fileInfo(bucket)
+				if err != nil {
+					sendErr(err)
+					return
+				}
+				if opts.Filter != nil {
+					if opts.Filter(fi) {
+						if !send(fi.ToObjectInfo(bucket, fi.Name, vcfg != nil && vcfg.Versioned(fi.Name))) {
+							return
+						}
+					}
+				} else {
+					if !send(fi.ToObjectInfo(bucket, fi.Name, vcfg != nil && vcfg.Versioned(fi.Name))) {
+						return
+					}
+				}
+				continue
+			}
+			fivs, err := entry.fileInfoVersions(bucket)
+			if err != nil {
+				sendErr(err)
+				return
+			}
+
+			// Note: entry.fileInfoVersions returns versions sorted in reverse chronological order based on ModTime
+			if opts.VersionsSort == WalkVersionsSortAsc {
+				versionsSorter(fivs.Versions).reverse()
+			}
+
+			for _, version := range fivs.Versions {
+				if opts.Filter != nil {
+					if opts.Filter(version) {
+						if !send(version.ToObjectInfo(bucket, version.Name, vcfg != nil && vcfg.Versioned(version.Name))) {
+							return
+						}
+					}
+				} else {
+					if !send(version.ToObjectInfo(bucket, version.Name, vcfg != nil && vcfg.Versioned(version.Name))) {
+						return
+					}
+				}
+			}
+		}
+		if err := <-errCh; err != nil {
+			sendErr(err)
+		}
+	}()
+	go func() {
+		defer close(errCh)
+
+		// Merge all entries from all disks.
+		// We leave quorum at 1, since entries are already resolved to have the desired quorum.
+		// mergeEntryChannels will close 'merged' channel upon completion or cancellation.
+		err := mergeEntryChannels(ctx, entries, merged, 1)
+		if errors.Is(err, context.Canceled) {
+			err = errors.Join(err, context.Cause(ctx))
+		}
+		errCh <- err
 	}()
 
 	return nil

@@ -39,11 +39,12 @@ import (
 	"github.com/gobwas/ws/wsutil"
 	"github.com/google/uuid"
 	"github.com/minio/madmin-go/v3"
+	"github.com/tinylib/msgp/msgp"
+	"github.com/zeebo/xxh3"
+
 	xioutil "github.com/minio/minio/internal/ioutil"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/minio/internal/pubsub"
-	"github.com/tinylib/msgp/msgp"
-	"github.com/zeebo/xxh3"
 )
 
 // A Connection is a remote connection.
@@ -114,6 +115,14 @@ type Connection struct {
 	debugOutConn net.Conn
 	addDeadline  time.Duration
 	connMu       sync.Mutex
+}
+
+func (c *Connection) ForcePingPong() {
+	atomic.StoreInt64(&c.LastPong, time.Now().Unix())
+	c.inStream.Range(func(key uint64, value *muxServer) bool {
+		atomic.StoreInt64(&value.LastPing, time.Now().Unix())
+		return true
+	})
 }
 
 // Subroute is a connection subroute that can be used to route to a specific handler with the same handler ID.
@@ -855,7 +864,7 @@ func (c *Connection) updateState(s State) {
 		return
 	}
 	if s == StateConnected {
-		atomic.StoreInt64(&c.LastPong, time.Now().UnixNano())
+		atomic.StoreInt64(&c.LastPong, time.Now().Unix())
 	}
 	atomic.StoreUint32((*uint32)(&c.state), uint32(s))
 	if debugPrint {
