@@ -2861,7 +2861,8 @@ func (a adminAPIHandlers) HealthInfoHandler(w http.ResponseWriter, r *http.Reque
 
 // ListObjectsHandler - Outputs a csv with all objects of a bucket.
 func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, ctxCancel := context.WithCancel(r.Context())
+	defer ctxCancel()
 
 	objectAPIInterface, _ := validateAdminReq(ctx, w, r, policy.ListBucketAction)
 	if objectAPIInterface == nil {
@@ -2888,6 +2889,29 @@ func (a adminAPIHandlers) ListObjectsHandler(w http.ResponseWriter, r *http.Requ
 		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), "missing or empty bucket", r.URL)
 		return
 	}
+
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				g := globalGrid.Load()
+				if g == nil {
+					continue
+				}
+				for _, host := range g.Targets() {
+					c := g.Connection(host)
+					if c != nil {
+						c.ForcePingPong()
+					}
+				}
+			}
+		}
+	}()
 
 	resultCh := make(chan objectInfoOrErr, metacacheBlockSize)
 	err := objectAPI.WalkUpstream(ctx, bucketName, "", resultCh, WalkOptions{
