@@ -2287,7 +2287,7 @@ func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix st
 			default:
 			}
 			xioutil.SafeClose(results)
-			cancelCause(nil)
+			cancelCause(errors.New("exit defer nil"))
 		}()
 		send := func(oi ObjectInfo) bool {
 			select {
@@ -2350,10 +2350,15 @@ func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix st
 	}()
 	go func() {
 		defer close(errCh)
+
 		// Merge all entries from all disks.
 		// We leave quorum at 1, since entries are already resolved to have the desired quorum.
 		// mergeEntryChannels will close 'merged' channel upon completion or cancellation.
-		errCh <- mergeEntryChannels(ctx, entries, merged, 1)
+		err := mergeEntryChannels(ctx, entries, merged, 1)
+		if errors.Is(err, context.Canceled) {
+			err = errors.Join(err, context.Cause(ctx))
+		}
+		errCh <- err
 	}()
 
 	return nil
