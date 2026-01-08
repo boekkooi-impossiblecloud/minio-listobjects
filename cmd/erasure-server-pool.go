@@ -2151,7 +2151,7 @@ type objectInfoOrErr struct {
 	Err  error
 }
 
-// WalkUpstream taken from https://raw.githubusercontent.com/minio/minio/847ee5ac452b265f8acb2cf5280130adb1c9aa35/cmd/erasure-server-pool.go
+// WalkUpstream taken from https://raw.githubusercontent.com/minio/minio/2d7a3d15166cc521db98dc4fb1eddbdecc0ca523/cmd/erasure-server-pool.go
 func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix string, results chan<- objectInfoOrErr, opts WalkOptions) error {
 	if err := checkListObjsArgs(ctx, bucket, prefix, ""); err != nil {
 		xioutil.SafeClose(results)
@@ -2268,9 +2268,8 @@ func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix st
 	// Convert and filter merged entries.
 	merged := make(chan metaCacheEntry, 100)
 	vcfg, _ := globalBucketVersioningSys.Get(bucket)
+	errCh := make(chan error, 1)
 	go func() {
-		defer cancelCause(nil)
-		defer xioutil.SafeClose(results)
 		sentErr := false
 		sendErr := func(err error) {
 			if !sentErr {
@@ -2281,6 +2280,15 @@ func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix st
 				}
 			}
 		}
+		defer func() {
+			select {
+			case <-ctx.Done():
+				sendErr(ctx.Err())
+			default:
+			}
+			xioutil.SafeClose(results)
+			cancelCause(nil)
+		}()
 		send := func(oi ObjectInfo) bool {
 			select {
 			case results <- objectInfoOrErr{Item: oi}:
@@ -2336,12 +2344,16 @@ func (z *erasureServerPools) WalkUpstream(ctx context.Context, bucket, prefix st
 				}
 			}
 		}
+		if err := <-errCh; err != nil {
+			sendErr(err)
+		}
 	}()
 	go func() {
+		defer close(errCh)
 		// Merge all entries from all disks.
 		// We leave quorum at 1, since entries are already resolved to have the desired quorum.
 		// mergeEntryChannels will close 'merged' channel upon completion or cancellation.
-		logger.LogIf(ctx, mergeEntryChannels(ctx, entries, merged, 1))
+		errCh <- mergeEntryChannels(ctx, entries, merged, 1)
 	}()
 
 	return nil
