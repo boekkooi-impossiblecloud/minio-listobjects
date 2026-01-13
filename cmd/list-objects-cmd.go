@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
@@ -20,10 +21,21 @@ import (
 	"github.com/minio/minio/internal/logger"
 )
 
+var listObjectsFlags = []cli.Flag{
+	cli.StringFlag{
+		Name:  "bucket",
+		Usage: "the bucket to list objects for",
+	},
+	cli.BoolFlag{
+		Name:  "versioned",
+		Usage: "specify if the bucket is versioned",
+	},
+}
+
 var listObjectsCmd = cli.Command{
 	Name:   "list-objects",
 	Usage:  "list all the objects of a bucket on the disks",
-	Flags:  GlobalFlags,
+	Flags:  append(listObjectsFlags, GlobalFlags...),
 	Action: listObjectsMain,
 	CustomHelpTemplate: `NAME:
   {{.HelpName}} - {{.Usage}}
@@ -44,10 +56,26 @@ func listObjectsMain(cliCtx *cli.Context) {
 	globalConsoleSys = NewConsoleLogger(GlobalContext)
 	_ = logger.AddSystemTarget(GlobalContext, globalConsoleSys)
 
-	err := mergeDisksLayoutFromArgs(serverCmdArgs(cliCtx), &globalServerCtxt)
+	if !cliCtx.Args().Present() || cliCtx.Args().First() == "help" {
+		cli.ShowCommandHelpAndExit(cliCtx, cliCtx.Command.Name, 1)
+	}
+
+	err := mergeDisksLayoutFromArgs(cliCtx.Args(), &globalServerCtxt)
 	logger.FatalIf(err, "Unable to prepare the list of endpoints")
 
-	bucket := "bucket1"
+	if !cliCtx.IsSet("bucket") {
+		logger.Error("bucket parameter is required")
+		cli.ShowCommandHelpAndExit(cliCtx, cliCtx.Command.Name, 1)
+		return
+	}
+	if !cliCtx.IsSet("versioned") {
+		logger.Error("versioned parameter is required")
+		cli.ShowCommandHelpAndExit(cliCtx, cliCtx.Command.Name, 1)
+		return
+	}
+
+	bucket := cliCtx.String("bucket")
+	versioned := cliCtx.Bool("versioned")
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
@@ -64,13 +92,15 @@ func listObjectsMain(cliCtx *cli.Context) {
 	for _, pool := range globalServerCtxt.Layout.pools {
 		for _, endpointList := range pool.layout {
 			for _, disk := range endpointList {
-				createBucketObjectListForDisk(ctx, disk, bucket)
+				createBucketObjectListForDisk(ctx, disk, bucket, versioned)
+				logger.Info("Done listing objects on disk " + disk)
 			}
 		}
 	}
+	logger.Info("Done listing objects for " + bucket)
 }
 
-func createBucketObjectListForDisk(ctx context.Context, disk, bucket string) {
+func createBucketObjectListForDisk(ctx context.Context, disk, bucket string, versioned bool) {
 	name := strings.TrimLeft(strings.Replace(disk, "/", "_", -1), "_")
 	fp, err := os.Create(name)
 	if err != nil {
@@ -81,6 +111,9 @@ func createBucketObjectListForDisk(ctx context.Context, disk, bucket string) {
 		logger.FatalIf(err, "Failed to close list objects file for "+bucket+" on disk "+disk)
 	}()
 
+	csvWriter := csv.NewWriter(fp)
+	defer csvWriter.Flush()
+
 	r := readStorage{
 		drivePath: disk,
 		legacy:    globalServerCtxt.Layout.legacy,
@@ -89,7 +122,7 @@ func createBucketObjectListForDisk(ctx context.Context, disk, bucket string) {
 		walkMu:     &sync.Mutex{},
 		walkReadMu: &sync.Mutex{},
 	}
-	err = r.WalkDir(ctx, "bucket1", fp)
+	err = r.WalkDir(ctx, bucket, versioned, csvWriter)
 	if err != nil {
 		logger.Fatal(err, "Unable to list objects in "+bucket+" on disk "+disk)
 	}
@@ -106,7 +139,7 @@ type readStorage struct {
 }
 
 // WalkDir is a striped down version of xlStorage.WalkDir
-func (s *readStorage) WalkDir(ctx context.Context, bucket string, writer io.Writer) error {
+func (s *readStorage) WalkDir(ctx context.Context, bucket string, versioned bool, writer *csv.Writer) error {
 	// Verify if volume is valid and it exists.
 	volumeDir, err := s.getVolDir(bucket)
 	if err != nil {
@@ -118,14 +151,27 @@ func (s *readStorage) WalkDir(ctx context.Context, bucket string, writer io.Writ
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if entry.isDir() {
+			if entry.isDir() || (!versioned && entry.isObjectDir() && entry.isLatestDeletemarker()) {
 				return nil
 			}
 			if entry.isLatestDeletemarker() {
 				return nil
 			}
-			_, err = writer.Write([]byte(entry.name + "\n"))
-			return err
+			if versioned {
+				var fiv FileInfoVersions
+				fiv, err = entry.fileInfoVersions(bucket)
+				if err != nil {
+					return err
+				}
+				for _, version := range fiv.Versions {
+					err = writer.Write([]string{entry.name, version.VersionID})
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			return writer.Write([]string{entry.name})
 		}
 	}
 
