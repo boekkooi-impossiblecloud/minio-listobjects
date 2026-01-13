@@ -153,10 +153,8 @@ func (s *readStorage) WalkDir(ctx context.Context, bucket string, versioned bool
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if entry.isDir() || (!versioned && entry.isObjectDir() && entry.isLatestDeletemarker()) {
-				return nil
-			}
-			if entry.isLatestDeletemarker() {
+			// Exclude directories
+			if entry.isDir() {
 				return nil
 			}
 			if versioned {
@@ -166,11 +164,19 @@ func (s *readStorage) WalkDir(ctx context.Context, bucket string, versioned bool
 					return err
 				}
 				for _, version := range fiv.Versions {
-					err = writer.Write([]string{entry.name, version.VersionID})
+					err = writer.Write([]string{entry.name, version.VersionID, strconv.FormatBool(version.Deleted)})
 					if err != nil {
 						return err
 					}
 				}
+				return nil
+			}
+			// Exclude directories
+			if entry.isObjectDir() && entry.isLatestDeletemarker() {
+				return nil
+			}
+			// Exclude deleted objects
+			if entry.isObject() && entry.isLatestDeletemarker() && !entry.isObjectDir() {
 				return nil
 			}
 			return writer.Write([]string{entry.name})
