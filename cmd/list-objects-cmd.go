@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -76,6 +77,7 @@ func listObjectsMain(cliCtx *cli.Context) {
 
 	bucket := cliCtx.String("bucket")
 	versioned := cliCtx.Bool("versioned")
+	runID := strconv.FormatInt(time.Now().Unix(), 10)
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
@@ -92,7 +94,7 @@ func listObjectsMain(cliCtx *cli.Context) {
 	for _, pool := range globalServerCtxt.Layout.pools {
 		for _, endpointList := range pool.layout {
 			for _, disk := range endpointList {
-				createBucketObjectListForDisk(ctx, disk, bucket, versioned)
+				createBucketObjectListForDisk(ctx, runID, disk, bucket, versioned)
 				logger.Info("Done listing objects on disk " + disk)
 			}
 		}
@@ -100,8 +102,8 @@ func listObjectsMain(cliCtx *cli.Context) {
 	logger.Info("Done listing objects for " + bucket)
 }
 
-func createBucketObjectListForDisk(ctx context.Context, disk, bucket string, versioned bool) {
-	name := strings.TrimLeft(strings.Replace(disk, "/", "_", -1), "_")
+func createBucketObjectListForDisk(ctx context.Context, runID, disk, bucket string, versioned bool) {
+	name := bucket + "_" + runID + strings.Replace(disk, "/", "_", -1) + ".csv"
 	fp, err := os.Create(name)
 	if err != nil {
 		logger.Fatal(err, "Unable to create file"+name)
