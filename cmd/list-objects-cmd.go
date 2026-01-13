@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/minio/cli"
+	"github.com/minio/pkg/v2/ellipses"
 	"github.com/valyala/bytebufferpool"
 
 	xioutil "github.com/minio/minio/internal/ioutil"
@@ -61,8 +62,24 @@ func listObjectsMain(cliCtx *cli.Context) {
 		cli.ShowCommandHelpAndExit(cliCtx, cliCtx.Command.Name, 1)
 	}
 
-	err := mergeDisksLayoutFromArgs(cliCtx.Args(), &globalServerCtxt)
-	logger.FatalIf(err, "Unable to prepare the list of endpoints")
+	var disks []string
+	for _, arg := range cliCtx.Args() {
+		if ellipses.HasEllipses(arg) {
+			patterns, perr := ellipses.FindEllipsesPatterns(arg)
+			if perr != nil {
+				logger.Fatal(perr, "failed to find ellipsis patterns for "+arg)
+			}
+			for _, ds := range patterns.Expand() {
+				disks = append(disks, ds...)
+			}
+		} else {
+			disks = append(disks, arg)
+		}
+	}
+	if len(disks) == 0 {
+		logger.Error("No disks provided")
+		return
+	}
 
 	if !cliCtx.IsSet("bucket") {
 		logger.Error("bucket parameter is required")
@@ -91,13 +108,9 @@ func listObjectsMain(cliCtx *cli.Context) {
 		}
 	}()
 
-	for _, pool := range globalServerCtxt.Layout.pools {
-		for _, endpointList := range pool.layout {
-			for _, disk := range endpointList {
-				createBucketObjectListForDisk(ctx, runID, disk, bucket, versioned)
-				logger.Info("Done listing objects on disk " + disk)
-			}
-		}
+	for _, disk := range disks {
+		createBucketObjectListForDisk(ctx, runID, disk, bucket, versioned)
+		logger.Info("Done listing objects on disk " + disk)
 	}
 	logger.Info("Done listing objects for " + bucket)
 }
