@@ -96,6 +96,8 @@ func listObjectsMain(cliCtx *cli.Context) {
 	versioned := cliCtx.Bool("versioned")
 	runID := strconv.FormatInt(time.Now().Unix(), 10)
 
+	logger.Info("List " + bucket + " versioned " + strconv.FormatBool(versioned))
+
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	defer ctxCancel()
 
@@ -108,10 +110,16 @@ func listObjectsMain(cliCtx *cli.Context) {
 		}
 	}()
 
+	wg := sync.WaitGroup{}
 	for _, disk := range disks {
-		createBucketObjectListForDisk(ctx, runID, disk, bucket, versioned)
-		logger.Info("Done listing objects on disk " + disk)
+		wg.Add(1)
+		go func(disk string) {
+			defer wg.Done()
+			createBucketObjectListForDisk(ctx, runID, disk, bucket, versioned)
+			logger.Info("Done listing objects on disk " + disk)
+		}(disk)
 	}
+	wg.Wait()
 	logger.Info("Done listing objects for " + bucket)
 }
 
