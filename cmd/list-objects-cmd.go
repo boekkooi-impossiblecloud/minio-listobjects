@@ -337,7 +337,6 @@ func (s *readStorage) WalkDir(ctx context.Context, bucket string, versioned bool
 				}
 
 				// Recursive Scan folder we found. Should be in correct sort order where we are.
-				err = scanDir(pop)
 				if err = scanDir(pop); err != nil {
 					return err
 				}
