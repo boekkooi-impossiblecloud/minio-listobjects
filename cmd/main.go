@@ -137,6 +137,7 @@ func newApp(name string) *cli.App {
 	registerCommand(serverCmd)
 	registerCommand(gatewayCmd) // hidden kept for guiding users.
 	registerCommand(listObjectsCmd)
+	registerCommand(rescueObjectCmd)
 
 	// Set up app.
 	cli.HelpFlag = cli.BoolFlag{
